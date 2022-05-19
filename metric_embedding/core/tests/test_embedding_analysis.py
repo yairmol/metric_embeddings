@@ -1,0 +1,2 @@
+class DistortionAnalysisTester:
+    pass
