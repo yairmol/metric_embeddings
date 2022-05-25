@@ -1,7 +1,11 @@
+import os
+from functools import partial
 from itertools import chain, combinations, product
-from typing import Callable, Iterable, Optional, TypeVar
+from multiprocessing import Pool
+from typing import Callable, Iterable, Optional, Tuple, TypeVar
 
 from metric_embedding.core.metric_space import FiniteMetricSpace, Metric
+from tqdm import tqdm
 
 T1 = TypeVar("T1")
 T2 = TypeVar("T2")
@@ -14,6 +18,16 @@ def expansion(
     f: Embedding[T1, T2],
     u: T1, v: T1
 ):
+    return d_Y(f(u), f(v)) / d_X(u, v)
+
+
+def expansion1(
+    d_X: Metric[T1],
+    d_Y: Metric[T2],
+    f: Embedding[T1, T2],
+    uv: Tuple[T1, T1]
+):
+    u, v = uv
     return d_Y(f(u), f(v)) / d_X(u, v)
 
 
@@ -34,6 +48,16 @@ def contraction(
     return d_X(u, v) / d_Y(f(u), f(v))
 
 
+def contraction1(
+    d_X: Metric[T1],
+    d_Y: Metric[T2],
+    f: Embedding[T1, T2],
+    uv: Tuple[T1, T1]
+):
+    u, v = uv
+    return d_X(u, v) / d_Y(f(u), f(v))
+
+
 def contraction_curried(
     d_X: Metric[T1],
     d_Y: Metric[T2],
@@ -50,9 +74,11 @@ def __preprocess(X: FiniteMetricSpace[T1], S: Optional[Iterable[T1]], T: Optiona
     if T is None:
         T = X.points
     S = set(S)
+    T = set(T)
     I = S.intersection(T)
     S.difference_update(I)
     return S, T, I
+
 
 def embedding_contraction(
     X: FiniteMetricSpace[T1],
@@ -60,7 +86,8 @@ def embedding_contraction(
     f: Embedding[T1, T2],
     S: Optional[Iterable[T1]] = None,
     T: Optional[Iterable[T1]] = None,
-
+    progress_bar: bool = False,
+    n_workers: int = 0
 ) -> float:
     """
     Calculate the contraction of an embedding f: (X, d_X) -> (Y, d_Y)
@@ -72,6 +99,11 @@ def embedding_contraction(
     f: A function mapping defined on the points of x, mapping to the domain of d_Y
     S: A subset of X. If given, the function calculates only with pairs intersecting S
     T: A subset of X. If given the function calculates only with pairs in S x T
+    progress_bar: If True, display a progress bar for the contraction
+        calculation
+    n_workers: The number of parallel subprocesses. 0 or 1 will means no
+        parallelism and above 1 is the number of worker processes
+
 
     Returns
     -------
@@ -79,10 +111,18 @@ def embedding_contraction(
     of d_X(u, v) / d_Y(f(u), f(v))
     """
     S, T, I = __preprocess(X, S, T)
-    c = contraction_curried(X.d, d_Y, f)
-    ctag = lambda t: c(*t)
-    return max(map(ctag, chain(product(S, T), combinations(I, 2))))
-
+    pairs = chain(product(S, T), combinations(I, 2))
+    if progress_bar:
+        pairs = tqdm(pairs, total=len(S) * len(T) + len(I) * (len(I) - 1) // 2)
+    if n_workers == 0:
+        c = contraction_curried(X.d, d_Y, f)
+        ctag = lambda t: c(*t)
+        return max(map(ctag, pairs))
+    c = partial(contraction1, X.d, d_Y, f)
+    n_workers = min(n_workers, os.cpu_count() or 1)
+    with Pool(n_workers) as p:
+        return max(p.map(c, pairs))
+    
 
 def embedding_expansion(
     X: FiniteMetricSpace[T1],
@@ -90,7 +130,8 @@ def embedding_expansion(
     f: Embedding[T1, T2],
     S: Optional[Iterable[T1]] = None,
     T: Optional[Iterable[T1]] = None,
-
+    progress_bar: bool = False,
+    n_workers: int = 0
 ) -> float:
     """
     Calculate the expansion of an embedding f: (X, d_X) -> (Y, d_Y)
@@ -102,6 +143,10 @@ def embedding_expansion(
     f: A function mapping defined on the points of x, mapping to the domain of d_Y
     S: A subset of X. If given, the function calculates only with pairs intersecting S
     T: A subset of X. If given the function calculates only with pairs in S x T
+    progress_bar: If True, display a progress bar for the contraction
+        calculation
+    n_workers: The number of parallel subprocesses. 0 or 1 will means no
+        parallelism and above 1 is the number of worker processes
 
     Returns
     -------
@@ -109,9 +154,17 @@ def embedding_expansion(
     of  d_Y(f(u), f(v)) / d_X(u, v)
     """
     S, T, I = __preprocess(X, S, T)
-    e = expansion_curried(X.d, d_Y, f)
-    etag = lambda t: e(*t)
-    return max(map(etag, chain(product(S, T), combinations(I, 2))))
+    pairs = chain(product(S, T), combinations(I, 2))
+    if progress_bar:
+        pairs = tqdm(pairs, total=len(S) * len(T) + len(I) * (len(I) - 1) // 2)
+    if n_workers == 0:
+        e = expansion_curried(X.d, d_Y, f)
+        etag = lambda t: e(*t)
+        return max(map(etag, pairs))
+    n_workers = min(n_workers, os.cpu_count() or 1)
+    e = partial(expansion1, X.d, d_Y, f)
+    with Pool(n_workers) as p:
+        return max(p.map(e, pairs))
 
 
 def embedding_distortion(
@@ -120,6 +173,8 @@ def embedding_distortion(
     f: Embedding[T1, T2],
     S: Optional[Iterable[T1]] = None,
     T: Optional[Iterable[T1]] = None,
+    progress_bar: bool = False,
+    n_workers: int = 0
 ) -> float:
     """
     Calculate the distortion of an embedding f: (X, d_X) -> (Y, d_Y)
@@ -131,14 +186,18 @@ def embedding_distortion(
     f: A function mapping defined on the points of x, mapping to the domain of d_Y
     S: A subset of X. If given, the function calculates only with pairs intersecting S
     T: A subset of X. If given the function calculates only with pairs in S x T
+    progress_bar: If True, display a progress bar for the contraction
+        calculation
+    n_workers: The number of parallel subprocesses. 0 or 1 will means no
+        parallelism and above 1 is the number of worker processes
 
     Returns
     -------
     The distortion of the embedding, defined as the expansion * distortion
     """
     return (
-        embedding_contraction(X, d_Y, f, S, T) 
-        * embedding_expansion(X, d_Y, f, S, T)
+        embedding_contraction(X, d_Y, f, S, T, progress_bar=progress_bar, n_workers=n_workers) 
+        * embedding_expansion(X, d_Y, f, S, T, progress_bar=progress_bar, n_workers=n_workers)
     )
 
 
@@ -171,7 +230,7 @@ def expanded_pairs(
     S, T, I = __preprocess(X, S, T)
     e = expansion_curried(X.d, d_Y, f)
     return filter(
-        lambda t: e(*t) > threshold, 
+        lambda t: e(*t) > threshold,
         chain(product(S, T), combinations(I, 2))
     )
 

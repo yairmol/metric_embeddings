@@ -18,6 +18,9 @@ class FiniteMetricSpace(MetricSpace[T]):
     def __iter__(self):
         return iter(self.points)
     
+    def __len__(self):
+        return len(self.points)
+    
     def pairs(self):
         return combinations(self.points, 2)
     

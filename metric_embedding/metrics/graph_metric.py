@@ -14,6 +14,10 @@ def nx_graph_to_rx_graph(G: nx.Graph):
     return Gr
 
 
+def unit_weight(_):
+    return 1
+
+
 class GraphMetricSpace(FiniteMetricSpace[T]):
     def __init__(self, G: nx.Graph, weight=None):
         super().__init__(set(G.nodes), self.shortest_path_metric)
@@ -22,13 +26,16 @@ class GraphMetricSpace(FiniteMetricSpace[T]):
         self.__sp_dict = OrderedDict()
         self.__max_sp_buffer_size = 1
         if weight is None:
-            self.__weight = lambda _: 1
+            self.__weight = unit_weight
         elif callable(weight):
             self.__weight = weight
         else:
             assert weight is str
-            self.__weight = lambda e: self.G.edges[e][weight]
-        
+            self.weight_str = weight
+            self.__weight = self.__edge_weight
+    
+    def __edge_weight(self, e):
+        return self.G.edges[e][self.weight_str]
 
     def shortest_path_metric(self, u: T, v: T):
         if u == v:
