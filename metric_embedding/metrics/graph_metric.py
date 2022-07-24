@@ -1,5 +1,5 @@
 from collections import OrderedDict
-from typing import TypeVar
+from typing import Callable, Iterable, Optional, Tuple, TypeVar, Union
 
 import networkx as nx
 import retworkx as rx
@@ -9,8 +9,9 @@ T = TypeVar("T")
 
 def nx_graph_to_rx_graph(G: nx.Graph):
     Gr = rx.PyGraph()  # type: ignore
-    Gr.add_nodes_from(G.nodes)
-    Gr.add_edges_from(list((u, v, G[u][v]) for u, v in G.edges))
+    nodes_indices = Gr.add_nodes_from(G.nodes)
+    d = dict(zip(G.nodes, nodes_indices))
+    Gr.add_edges_from(list((d[u], d[v], G[u][v]) for u, v in G.edges))
     return Gr
 
 
@@ -18,8 +19,15 @@ def unit_weight(_):
     return 1
 
 
+WeightFunction = Callable[[Tuple[T, T]], float]
+
+
 class GraphMetricSpace(FiniteMetricSpace[T]):
-    def __init__(self, G: nx.Graph, weight=None):
+    def __init__(
+        self,
+        G: nx.Graph,
+        weight: Optional[Union[str, WeightFunction[T]]]=None
+    ):
         super().__init__(set(G.nodes), self.shortest_path_metric)
         self.G = G
         self.__G = nx_graph_to_rx_graph(self.G)
@@ -34,7 +42,7 @@ class GraphMetricSpace(FiniteMetricSpace[T]):
             self.weight_str = weight
             self.__weight = self.__edge_weight
     
-    def __edge_weight(self, e):
+    def __edge_weight(self, e: Tuple[T, T]) -> float:
         return self.G.edges[e][self.weight_str]
 
     def shortest_path_metric(self, u: T, v: T):
@@ -50,3 +58,8 @@ class GraphMetricSpace(FiniteMetricSpace[T]):
             self.__G, u, self.__weight
         )
         return self.__sp_dict[u][v]
+    
+    def induced_subgraph_metric(self, S: Iterable[T]):
+        return GraphMetricSpace(
+            nx.induced_subgraph(self.G, S), weight=self.__weight
+        )

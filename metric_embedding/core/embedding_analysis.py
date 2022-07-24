@@ -2,20 +2,24 @@ import os
 from functools import partial
 from itertools import chain, combinations, product
 from multiprocessing import Pool
-from typing import Callable, Iterable, Optional, Tuple, TypeVar
+from typing import Callable, Dict, Iterable, Optional, Tuple, TypeVar, Union
 
 from metric_embedding.core.metric_space import FiniteMetricSpace, Metric
 from tqdm import tqdm
 
 T1 = TypeVar("T1")
 T2 = TypeVar("T2")
-Embedding = Callable[[T1], T2]
+
+DictEmbedding = Dict[T1, T2]
+CallableEmbedding = Callable[[T1], T2]
+Embedding = Union[DictEmbedding, CallableEmbedding]
+
 
 
 def expansion(
     d_X: Metric[T1],
     d_Y: Metric[T2],
-    f: Embedding[T1, T2],
+    f: CallableEmbedding[T1, T2],
     u: T1, v: T1
 ):
     return d_Y(f(u), f(v)) / d_X(u, v)
@@ -24,7 +28,7 @@ def expansion(
 def expansion1(
     d_X: Metric[T1],
     d_Y: Metric[T2],
-    f: Embedding[T1, T2],
+    f: CallableEmbedding[T1, T2],
     uv: Tuple[T1, T1]
 ):
     u, v = uv
@@ -34,7 +38,7 @@ def expansion1(
 def expansion_curried(
     d_X: Metric[T1],
     d_Y: Metric[T2],
-    f: Embedding[T1, T2],
+    f: CallableEmbedding[T1, T2],
 ):
     return lambda u, v: d_Y(f(u), f(v)) / d_X(u, v)
 
@@ -42,7 +46,7 @@ def expansion_curried(
 def contraction(
     d_X: Metric[T1],
     d_Y: Metric[T2],
-    f: Embedding[T1, T2],
+    f: CallableEmbedding[T1, T2],
     u: T1, v: T1
 ):
     return d_X(u, v) / d_Y(f(u), f(v))
@@ -51,7 +55,7 @@ def contraction(
 def contraction1(
     d_X: Metric[T1],
     d_Y: Metric[T2],
-    f: Embedding[T1, T2],
+    f: CallableEmbedding[T1, T2],
     uv: Tuple[T1, T1]
 ):
     u, v = uv
@@ -61,12 +65,16 @@ def contraction1(
 def contraction_curried(
     d_X: Metric[T1],
     d_Y: Metric[T2],
-    f: Embedding[T1, T2],
+    f: CallableEmbedding[T1, T2],
 ):
     return lambda u, v: d_X(u, v) / d_Y(f(u), f(v))
 
 
-def __preprocess(X: FiniteMetricSpace[T1], S: Optional[Iterable[T1]], T: Optional[Iterable[T1]]):
+def __preprocess(
+    X: FiniteMetricSpace[T1],
+    S: Optional[Iterable[T1]],
+    T: Optional[Iterable[T1]]
+):
     if T is not None and S is None:
         raise ValueError("S must be given when T is")
     if S is None:
@@ -83,7 +91,7 @@ def __preprocess(X: FiniteMetricSpace[T1], S: Optional[Iterable[T1]], T: Optiona
 def embedding_contraction(
     X: FiniteMetricSpace[T1],
     d_Y: Metric[T2],
-    f: Embedding[T1, T2],
+    f: CallableEmbedding[T1, T2],
     S: Optional[Iterable[T1]] = None,
     T: Optional[Iterable[T1]] = None,
     progress_bar: bool = False,
@@ -96,8 +104,10 @@ def embedding_contraction(
     ----------
     X: A finite metric space being embedded
     d_Y: A metric that acts on the image of the embedding f
-    f: A function mapping defined on the points of x, mapping to the domain of d_Y
-    S: A subset of X. If given, the function calculates only with pairs intersecting S
+    f: A function mapping defined on the points of x, 
+        mapping to the domain of d_Y
+    S: A subset of X. If given, the function calculates only 
+        with pairs intersecting S
     T: A subset of X. If given the function calculates only with pairs in S x T
     progress_bar: If True, display a progress bar for the contraction
         calculation
@@ -127,7 +137,7 @@ def embedding_contraction(
 def embedding_expansion(
     X: FiniteMetricSpace[T1],
     d_Y: Metric[T2],
-    f: Embedding[T1, T2],
+    f: CallableEmbedding[T1, T2],
     S: Optional[Iterable[T1]] = None,
     T: Optional[Iterable[T1]] = None,
     progress_bar: bool = False,
@@ -140,8 +150,10 @@ def embedding_expansion(
     ----------
     X: A finite metric space being embedded
     d_Y: A metric that acts on the image of the embedding f
-    f: A function mapping defined on the points of x, mapping to the domain of d_Y
-    S: A subset of X. If given, the function calculates only with pairs intersecting S
+    f: A function mapping defined on the points of x,
+        mapping to the domain of d_Y
+    S: A subset of X. If given, the function calculates only
+        with pairs intersecting S
     T: A subset of X. If given the function calculates only with pairs in S x T
     progress_bar: If True, display a progress bar for the contraction
         calculation
@@ -170,7 +182,7 @@ def embedding_expansion(
 def embedding_distortion(
     X: FiniteMetricSpace[T1],
     d_Y: Metric[T2],
-    f: Embedding[T1, T2],
+    f: CallableEmbedding[T1, T2],
     S: Optional[Iterable[T1]] = None,
     T: Optional[Iterable[T1]] = None,
     progress_bar: bool = False,
@@ -183,8 +195,10 @@ def embedding_distortion(
     ----------
     X: A finite metric space being embedded
     d_Y: A metric that acts on the image of the embedding f
-    f: A function mapping defined on the points of x, mapping to the domain of d_Y
-    S: A subset of X. If given, the function calculates only with pairs intersecting S
+    f: A function mapping defined on the points of x,
+        mapping to the domain of d_Y
+    S: A subset of X. If given, the function calculates only
+        with pairs intersecting S
     T: A subset of X. If given the function calculates only with pairs in S x T
     progress_bar: If True, display a progress bar for the contraction
         calculation
@@ -193,18 +207,18 @@ def embedding_distortion(
 
     Returns
     -------
-    The distortion of the embedding, defined as the expansion * distortion
+    The distortion of the embedding, defined as the expansion * contraction
     """
     return (
-        embedding_contraction(X, d_Y, f, S, T, progress_bar=progress_bar, n_workers=n_workers) 
-        * embedding_expansion(X, d_Y, f, S, T, progress_bar=progress_bar, n_workers=n_workers)
+        embedding_contraction(X, d_Y, f, S, T, progress_bar, n_workers)
+        * embedding_expansion(X, d_Y, f, S, T, progress_bar, n_workers)
     )
 
 
 def expanded_pairs(
     X: FiniteMetricSpace[T1],
     d_Y: Metric[T2],
-    f: Embedding[T1, T2],
+    f: CallableEmbedding[T1, T2],
     S: Optional[Iterable[T1]] = None,
     T: Optional[Iterable[T1]] = None,
     threshold: float = 1
@@ -217,8 +231,10 @@ def expanded_pairs(
     ----------
     X: A finite metric space being embedded
     d_Y: A metric that acts on the image of the embedding f
-    f: A function mapping defined on the points of x, mapping to the domain of d_Y
-    S: A subset of X. If given, the function calculates only with pairs intersecting S
+    f: A function mapping defined on the points of x,
+        mapping to the domain of d_Y
+    S: A subset of X. If given, the function calculates only
+        with pairs intersecting S
     T: A subset of X. If given the function calculates only with pairs in S x T
     threshold: A number which is at least 1. pairs who are expanded by a factor
         larger then threshold are returned
@@ -238,7 +254,7 @@ def expanded_pairs(
 def contracted_pairs(
     X: FiniteMetricSpace[T1],
     d_Y: Metric[T2],
-    f: Embedding[T1, T2],
+    f: CallableEmbedding[T1, T2],
     S: Optional[Iterable[T1]] = None,
     T: Optional[Iterable[T1]] = None,
     threshold: float = 1
@@ -251,8 +267,10 @@ def contracted_pairs(
     ----------
     X: A finite metric space being embedded
     d_Y: A metric that acts on the image of the embedding f
-    f: A function mapping defined on the points of x, mapping to the domain of d_Y
-    S: A subset of X. If given, the function calculates only with pairs intersecting S
+    f: A function mapping defined on the points of x,
+        mapping to the domain of d_Y
+    S: A subset of X. If given, the function calculates only
+        with pairs intersecting S
     T: A subset of X. If given the function calculates only with pairs in S x T
     threshold: A number which is at least 1. pairs who are contracted by a factor
         larger then threshold are returned
@@ -272,7 +290,7 @@ def contracted_pairs(
 def distorted_pairs(
     X: FiniteMetricSpace[T1],
     d_Y: Metric[T2],
-    f: Embedding[T1, T2],
+    f: CallableEmbedding[T1, T2],
     S: Optional[Iterable[T1]] = None,
     T: Optional[Iterable[T1]] = None,
     threshold: float = 1
@@ -285,8 +303,10 @@ def distorted_pairs(
     ----------
     X: A finite metric space being embedded
     d_Y: A metric that acts on the image of the embedding f
-    f: A function mapping defined on the points of x, mapping to the domain of d_Y
-    S: A subset of X. If given, the function calculates only with pairs intersecting S
+    f: A function mapping defined on the points of x,
+        mapping to the domain of d_Y
+    S: A subset of X. If given, the function calculates only
+        with pairs intersecting S
     T: A subset of X. If given the function calculates only with pairs in S x T
     threshold: A number which is at least 1. pairs who are expanded or contracted
         by a factor larger then threshold are returned
