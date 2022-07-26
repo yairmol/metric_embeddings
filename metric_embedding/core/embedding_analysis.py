@@ -117,11 +117,11 @@ def embedding_contraction(
     if n_workers == 0:
         c = contraction_curried(X.d, d_Y, f)
         ctag = lambda t: c(*t)
-        return max(map(ctag, pairs))
+        return max(1, max(map(ctag, pairs)))
     c = partial(contraction1, X.d, d_Y, f)
     n_workers = min(n_workers, os.cpu_count() or 1)
     with Pool(n_workers) as p:
-        return max(p.map(c, pairs))
+        return max(1, max(p.map(c, pairs)))
     
 
 def embedding_expansion(
@@ -160,11 +160,11 @@ def embedding_expansion(
     if n_workers == 0:
         e = expansion_curried(X.d, d_Y, f)
         etag = lambda t: e(*t)
-        return max(map(etag, pairs))
+        return max(1, max(map(etag, pairs)))
     n_workers = min(n_workers, os.cpu_count() or 1)
     e = partial(expansion1, X.d, d_Y, f)
     with Pool(n_workers) as p:
-        return max(p.map(e, pairs))
+        return max(1, max(p.map(e, pairs)))
 
 
 def embedding_distortion(
