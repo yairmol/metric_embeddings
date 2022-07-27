@@ -2,7 +2,7 @@ import os
 from functools import partial
 from itertools import chain, combinations, product
 from multiprocessing import Pool
-from typing import Callable, Iterable, Optional, Tuple, TypeVar
+from typing import Callable, Iterable, Optional, Set, Tuple, TypeVar
 
 from metric_embedding.core.metric_space import FiniteMetricSpace, Metric
 from tqdm import tqdm
@@ -72,12 +72,15 @@ def __preprocess(X: FiniteMetricSpace[T1], S: Optional[Iterable[T1]], T: Optiona
     if S is None:
         S = X.points
     if T is None:
-        T = X.points
-    S = set(S)
-    T = set(T)
+        T = S
+    S, T = set(S), set(T)
     I = S.intersection(T)
     S.difference_update(I)
     return S, T, I
+
+
+def __pairs(S: Set[T1], T: Set[T1], I: Set[T1]):
+    return chain(product(S, T), product(I, T.difference(I)), combinations(I, 2))
 
 
 def embedding_contraction(
@@ -97,7 +100,7 @@ def embedding_contraction(
     X: A finite metric space being embedded
     d_Y: A metric that acts on the image of the embedding f
     f: A function mapping defined on the points of x, mapping to the domain of d_Y
-    S: A subset of X. If given, the function calculates only with pairs intersecting S
+    S: A subset of X. If given, the function calculates only with pairs contained in S
     T: A subset of X. If given the function calculates only with pairs in S x T
     progress_bar: If True, display a progress bar for the contraction
         calculation
@@ -111,7 +114,7 @@ def embedding_contraction(
     of d_X(u, v) / d_Y(f(u), f(v))
     """
     S, T, I = __preprocess(X, S, T)
-    pairs = chain(product(S, T), combinations(I, 2))
+    pairs = __pairs(S, T, I)
     if progress_bar:
         pairs = tqdm(pairs, total=len(S) * len(T) + len(I) * (len(I) - 1) // 2)
     if n_workers == 0:
@@ -141,7 +144,7 @@ def embedding_expansion(
     X: A finite metric space being embedded
     d_Y: A metric that acts on the image of the embedding f
     f: A function mapping defined on the points of x, mapping to the domain of d_Y
-    S: A subset of X. If given, the function calculates only with pairs intersecting S
+    S: A subset of X. If given, the function calculates only with pairs contained in S
     T: A subset of X. If given the function calculates only with pairs in S x T
     progress_bar: If True, display a progress bar for the contraction
         calculation
@@ -154,7 +157,7 @@ def embedding_expansion(
     of  d_Y(f(u), f(v)) / d_X(u, v)
     """
     S, T, I = __preprocess(X, S, T)
-    pairs = chain(product(S, T), combinations(I, 2))
+    pairs = __pairs(S, T, I)
     if progress_bar:
         pairs = tqdm(pairs, total=len(S) * len(T) + len(I) * (len(I) - 1) // 2)
     if n_workers == 0:
@@ -184,7 +187,7 @@ def embedding_distortion(
     X: A finite metric space being embedded
     d_Y: A metric that acts on the image of the embedding f
     f: A function mapping defined on the points of x, mapping to the domain of d_Y
-    S: A subset of X. If given, the function calculates only with pairs intersecting S
+    S: A subset of X. If given, the function calculates only with pairs contained in S
     T: A subset of X. If given the function calculates only with pairs in S x T
     progress_bar: If True, display a progress bar for the contraction
         calculation
@@ -218,7 +221,7 @@ def expanded_pairs(
     X: A finite metric space being embedded
     d_Y: A metric that acts on the image of the embedding f
     f: A function mapping defined on the points of x, mapping to the domain of d_Y
-    S: A subset of X. If given, the function calculates only with pairs intersecting S
+    S: A subset of X. If given, the function calculates only with pairs contained in S
     T: A subset of X. If given the function calculates only with pairs in S x T
     threshold: A number which is at least 1. pairs who are expanded by a factor
         larger then threshold are returned
@@ -231,7 +234,7 @@ def expanded_pairs(
     e = expansion_curried(X.d, d_Y, f)
     return filter(
         lambda t: e(*t) > threshold,
-        chain(product(S, T), combinations(I, 2))
+        __pairs(S, T, I)
     )
 
 
@@ -252,7 +255,7 @@ def contracted_pairs(
     X: A finite metric space being embedded
     d_Y: A metric that acts on the image of the embedding f
     f: A function mapping defined on the points of x, mapping to the domain of d_Y
-    S: A subset of X. If given, the function calculates only with pairs intersecting S
+    S: A subset of X. If given, the function calculates only with pairs contained in S
     T: A subset of X. If given the function calculates only with pairs in S x T
     threshold: A number which is at least 1. pairs who are contracted by a factor
         larger then threshold are returned
@@ -262,10 +265,10 @@ def contracted_pairs(
     A set of pairs that were contracted by a factor larger then threshold
     """
     S, T, I = __preprocess(X, S, T)
-    e = expansion_curried(X.d, d_Y, f)
+    e = contraction_curried(X.d, d_Y, f)
     return filter(
         lambda t: e(*t) > threshold, 
-        chain(product(S, T), combinations(I, 2))
+        __pairs(S, T, I)
     )
 
 
@@ -286,7 +289,7 @@ def distorted_pairs(
     X: A finite metric space being embedded
     d_Y: A metric that acts on the image of the embedding f
     f: A function mapping defined on the points of x, mapping to the domain of d_Y
-    S: A subset of X. If given, the function calculates only with pairs intersecting S
+    S: A subset of X. If given, the function calculates only with pairs contained in S
     T: A subset of X. If given the function calculates only with pairs in S x T
     threshold: A number which is at least 1. pairs who are expanded or contracted
         by a factor larger then threshold are returned
