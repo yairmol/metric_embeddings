@@ -1,16 +1,23 @@
 import os
-from itertools import compress, zip_longest
+from collections import defaultdict
+from itertools import compress, count, zip_longest
 from multiprocessing import Pool
-from typing import (Any, Dict, Generator, Generic, List, Optional, Set,
-                    TypeVar, Union)
+from typing import (Dict, FrozenSet, Generator, Generic, List, Optional, Set,
+                    Tuple, TypeVar, Union)
 
 import networkx as nx
 import numpy as np
 import retworkx as rx
-from metric_embedding.core.embedding_analysis import DictEmbedding, Embedding
+from metric_embedding.core.embedding_analysis import (DictEmbedding,
+                                                      contracted_pairs,
+                                                      embedding_distortion,
+                                                      expanded_pairs)
 from metric_embedding.core.metric_space import FiniteMetricSpace
-from metric_embedding.metrics.graph_metric import (GraphMetricSpace,
-                                                   nx_graph_to_rx_graph)
+from metric_embedding.metrics.graph_metric import GraphMetricSpace
+from metric_embedding.metrics.lp_metrics import LpMetric
+from metric_embedding.utils.rx_utils import (RxGraphWrapper,
+                                             connected_components,
+                                             largest_connected_component)
 from tqdm import tqdm
 
 T = TypeVar("T")
@@ -280,23 +287,26 @@ def tree_separator(T: nx.Graph):
 
     Returns
     -------
-    a single vertex from T
+    a single vertex from T that best separates T
     """
-    v = next(iter(T.nodes))
     n = len(T.nodes)
-    T_copy = nx_graph_to_rx_graph(T)
+    Tr = RxGraphWrapper.from_networkx_graph(T).G
+    v = Tr.node_indices()[0]
+    best_size, best_c, best_v = n, Tr.node_indices(), Tr[v]
     while True:
-        v_neighbors = T[v]
-        T_copy.remove_node(v)
-        CCs: List[set] = rx.connected_components(T_copy)  # type: ignore
+        v_neighbors = Tr.adj(v)
+        v_node = Tr[v]
+        Tr.remove_node(v)
+        CCs: List[set] = rx.connected_components(Tr)  # type: ignore
         C_max = CCs[np.argmax([len(C) for C in CCs])]
-        if len(C_max) <= 2 * n / 3:
-            C_max = {T_copy[u] for u in C_max}
-            return v, C_max, set(T.nodes).difference(C_max)
+        v = Tr.add_node(v_node)
+        if len(C_max) < best_size:
+            best_size, best_c, best_v = len(C_max), C_max, v_node
+        else:
+            return best_v, {Tr[u] for u in best_c}
+        Tr.add_edges_from([(u, v, None) for u in v_neighbors])
         # v has a single neighbor in each connected component since otherwise
         # there would be a cycle. This neighbor is a better separator
-        T_copy.add_node(v)
-        T_copy.add_edges_from([(u, v, None) for u in v_neighbors])
         v = next(iter(set(v_neighbors).intersection(C_max)))
 
 
@@ -327,21 +337,29 @@ def l_infinity_tree_embedding(dT: GraphMetricSpace[T]) -> Dict[T, np.ndarray]:
     """
     if not nx.is_tree(dT.G):
         raise ValueError("Given graph is not a tree")
-    if len(dT) == 2:
-        u, v = tuple(dT.G.nodes)
-        return {u: np.array([0]), v: np.array([dT.d(u, v)])}
-    v, L, R = tree_separator(dT.G)
-    f = dict()
-    for S in [L, R]:
-        S.add(v)
-        f_s = l_infinity_tree_embedding(dT.induced_subgraph_metric(S))
-        fv = f_s[v]
-        for u in f_s:
-            fu = f[u]
-            fu -= fv
-            fu.resize(len(fu) + 1, refcheck=False)
-            fu[-1] = dT.d(v, u)
-        f.update(f_s)
+    
+    def run(S):
+        if len(S) <= 2:
+            return {v: np.array([]) for v in S}, 0
+        v, L = tree_separator(nx.induced_subgraph(dT.G, S))
+        R = set(S).difference(L)
+        L.add(v)
+        f_l, dim_l = run(L)
+        f_r, dim_r = run(R)
+        dim = max(dim_l, dim_r) + 1
+        f = dict()
+        for f_s, sign in [(f_l, -1), (f_r, 1)]:
+            for u in f_s:
+                f_s[u].resize(dim, refcheck=False)
+            fv = f_s[v].copy()
+            for u in f_s:
+                fu = f_s[u]
+                fu -= fv
+                fu[-1] = sign * dT.d(v, u)
+            f.update(f_s)
+        return f, dim
+    
+    f, _ = run(dT)
     return f
 
 
@@ -435,7 +453,7 @@ def multigraph_to_graph(G: nx.MultiGraph, weight: str):
     """
     G1 = nx.Graph(G)
     for u, v in G1.edges:
-        G1[u][v][weight] = min(data[weight] for data in G1[u][v].values())
+        G1[u][v][weight] = min(data[weight] for data in G[u][v].values())
     return G1
 
 
@@ -482,21 +500,110 @@ def _degree_one_embedding_extension(
     return {u: np.concatenate([f_i[u] for f_i in fs]) for u in G.points}
 
 
-def _degree_two_embedding_extension(
-    G: GraphMetricSpace[T],
-    f: DictEmbedding[T, np.ndarray],
-    isolated_paths: List[Path[T]]
+# def _degree_two_embedding_extension(
+#     dG: GraphMetricSpace(G),
+#     weight: str,
+#     f: DictEmbedding[T, np.ndarray],
+#     isolated_paths: List[Path[T]]
+# ):
+#     paths_dists = dict()
+#     for P in isolated_paths:
+#         total = 0
+#         for i in range(1, len(P) - 1):
+#             total += G[P[i - 1]][P[i]]
+#             paths_dists[P[i]] = total
+    
+#     dim_f = len(f[next(iter(f.keys()))])
+
+#     def run(Ps: List[Path]):
+#         f_i = f.copy()
+#         for P in Ps:
+#             for i in range(1, len(P) - 1):
+#                 f_i[P[i]] = np.zeros(dim_f)
+
+#         for l in range(dim_f):
+#             Ps.sort(key=lambda P: min(f[P[0]][l], f[P[-1]][l]))
+#             Ps_l, Ps_r = Ps[:len(Ps) // 2], Ps[len(Ps) // 2:]
+#             for P in Ps_l:
+#                 w = __path_weight(G, P, weight)
+#                 d = 
+#                 for u in P[1:-1]:
+
+
+def generate_path(w: float, v_gen: count, eps: float, weight: str):
+    if w <= 1:
+        return nx.Graph(), next(v_gen)
+    num_vs = int(np.ceil(1 / eps))
+    vs = [next(v_gen) for _ in range(num_vs)]
+    P, s = generate_path(w / 2, v_gen, eps, weight)
+    P.add_edges_from(zip(vs[:-1], vs[1:]), **{weight: eps * w / 2})
+    missing_weight = w / 2 - (eps * w / 2) * (num_vs - 1)
+    P.add_edge(s, vs[-1], **{weight: missing_weight})
+    return P, vs[0]
+
+
+def _extend_metric(
+    G: nx.Graph,
+    G1: nx.Graph,
+    weight: str,
+    isolated_paths: List[Path[int]],
+    q: int,
+    eps: float = 0.5
 ):
-    return f
+    # eps = eps / (4 * q)
+    endpoints_to_paths: Dict[FrozenSet[int], Dict[int, List[Path[int]]]] = defaultdict(lambda: defaultdict(list))
+    for P in isolated_paths:
+        uv = frozenset({P[0], P[-1]})
+        w = __path_weight(G, P, weight)
+        scale = int(np.log(w) / np.log(1 + eps))
+        endpoints_to_paths[uv][scale].append(P)
+    
+    vertex_gen = count(max(G.nodes) + 1, step=1)
+    G1 = G1.copy()  # type: ignore
+    
+    for uv, scale_to_paths in endpoints_to_paths.items():
+        u, v = tuple(uv)
+        for scale in scale_to_paths:
+            w = (1 + eps) ** scale
+            P1, s1 = generate_path(w / 2, vertex_gen, eps, weight)
+            P2, s2 = generate_path(w / 2, vertex_gen, eps, weight)
+            for u in P2[s2]:
+                P2.add_edge(s1, u, **P2[s2][u])
+            P2.remove_node(s2)
+            t1 = next(v for v in P1 if P1.degree(v) == 1 and v != s1)
+            t2 = next(v for v in P2 if P2.degree(v) == 1 and v != s2)
+            P1.add_edge(u, t1)
+            P2.add_edge(t2, v)
+            G1.add_edges_from(P1.edges(data=True))
+            G1.add_edges_from(P2.edges(data=True))
+    
+    return G1
 
 
-def sparse_graph_embedding(G: nx.Graph, weight: str, q: int):
+def l_infinity_sparse_graph_embedding(G: nx.Graph, weight: str, q: int, eps=0.5):
+    """
+    Calculates a (1 + eps)(2q - 1)-embedding of G to l_{inf} with dimension
+    d = O((x * log(x) / eps)^(2/q)) where x = chi(G) = |E| - (|V| - 1)
+
+    Parameters
+    ----------
+    G: a networkx graph. G should be sparse meaning that chi(G) << |V|
+    weight: a string that is the weight attribute key
+    q: embedding distortion parameter (the distortion will be <= (1+eps)(2q-1))
+    eps: embedding distortion parameter (the distortion will be <= (1+eps)(2q-1))
+
+    Returns
+    -------
+    an embedding in the form of a dictionary, mapping from vertices to numpy
+    arrays
+    """
     dG = GraphMetricSpace(G, weight=weight)
     G1, F, isolated_paths = _1_2_elimination(G, weight)
     G1 = multigraph_to_graph(G1, weight)
-    dG1 = GraphMetricSpace(G1, weight=weight)
-    f = l_infinity_embedding(dG1, q)
-    f = GraphFrechetEmbedding(dG1, f.As, lazy=False)
-    g = _degree_one_embedding_extension(dG, f.as_dict_embedding(), F)
-    h = _degree_two_embedding_extension(dG, g, isolated_paths)
-    return h
+    for u, v in G1.edges:
+        G1[u][v][weight] *= 0.2
+    G1_ext = _extend_metric(G, G1, weight, isolated_paths, q, eps)
+    dG1_ext = GraphMetricSpace(G1_ext, weight=weight)
+    f = l_infinity_embedding(dG1_ext, q)
+    f = GraphFrechetEmbedding(dG1_ext, f.As, lazy=False)
+    return _degree_one_embedding_extension(dG, f.as_dict_embedding(), F)
