@@ -9,7 +9,7 @@ from metric_embedding.utils.rx_utils import (RxGraphWrapper,
 T = TypeVar("T")
 
 
-def __rx_unit_weight(_):
+def rx_unit_weight(_):
     return 1
 
 
@@ -25,7 +25,7 @@ class GraphMetricSpace(FiniteMetricSpace[T]):
         self.__sp_dict = OrderedDict()
         self.__max_sp_buffer_size = 1
         if weight is None:
-            self.__weight = __rx_unit_weight
+            self.__weight = rx_unit_weight
         elif callable(weight):
             self.__weight = weight
         else:
