@@ -366,14 +366,14 @@ def l_infinity_tree_embedding(
 Path = List
 
 
-def find_isolated_path(G: nx.MultiGraph) -> Optional[Path]:
+def find_isolated_path(G: nx.Graph) -> Optional[Path]:
     """
     If there exists an isolated path in G, returns an isolated path
     otherwise returns None
 
     Parameters
     ----------
-    G: a networkx multigraph
+    G: a networkx graph (or multigraph)
 
     Returns
     -------
@@ -385,25 +385,22 @@ def find_isolated_path(G: nx.MultiGraph) -> Optional[Path]:
     An isolated path is a path with at least 3 vertices such that all inner 
     vertices are of degree 2
     """
-    if not all(G.degree[u] >= 2 for u in G.nodes):
-        raise ValueError("Graph input for isolated path finding"
-                         "must have only vertices of degree >= 2")
     deg_2_node = next((u for u in G if G.degree[u] == 2), None)
+    if len(G[deg_2_node]) <= 1: # this deg_2_node has self loop
+        return None
     if deg_2_node is None:
         return None
     
     first = deg_2_node
     prev = first
     while G.degree[deg_2_node] == 2:
-        tmp = deg_2_node
-        deg_2_node = next(u for u in G[deg_2_node] if u != prev)
-        prev = tmp
+        prev, deg_2_node = deg_2_node, next(u for u in G[deg_2_node] if u != prev)
         if deg_2_node == first:
             break
 
     path = [deg_2_node, prev]
     deg_2_node = prev
-    while G.degree[deg_2_node] == 2:
+    while G.degree[deg_2_node] == 2 and deg_2_node != path[0]:
         u = next(u for u in G[deg_2_node] if u != path[-2])
         deg_2_node = u
         path.append(u)
@@ -474,22 +471,26 @@ def multigraph_to_graph(G: nx.MultiGraph, weight: str):
     -------
     A simple graph with the same shortest path metric as the given multigraph
     """
-    G1 = nx.Graph(G)
+    G1 = nx.Graph()
+    G1.add_nodes_from(G.nodes)
+    G1.add_edges_from({(u, v) for u, v, i in G.edges if u != v})
     for u, v in G1.edges:
         G1[u][v][weight] = min(data[weight] for data in G[u][v].values())
     return G1
 
 
-def _degree_one_embedding_extension(
+def deg_one_embedding_extension(
     G: GraphMetricSpace[T],
     f: DictEmbedding[T, np.ndarray],
     F: nx.Graph
 ):
-    if not nx.is_forest(F):
+    if len(F.nodes) != 0 and not nx.is_forest(F):
         raise ValueError("F must be a forest")
     trees: Generator[Set[T], None, None] = nx.connected_components(F)
     root_to_tree = {next(iter(T.intersection(G.G.nodes))): T for T in trees}
     roots = list(root_to_tree.keys())
+    if len(roots) == 0:
+        return f
     d_F = G.induced_subgraph_metric(F.nodes)
 
     @cache
@@ -563,13 +564,15 @@ def generate_path(u, v, w: float, v_gen: count, eps: float, weight: str):
     for n in P2[s2]:
         P1.add_edge(s1, n, **P2[s2][n])
     P2.remove_node(s2)
-    P1.add_edge(u, t1)
-    P2.add_edge(t2, v)
+    missing_weight_1 = w / 2  - sum(P1[u][v][weight] for u, v in P1.edges)
+    missing_weight_2 = w / 2  - sum(P2[u][v][weight] for u, v in P2.edges)
+    P1.add_edge(u, t1, **{weight: missing_weight_1})
+    P2.add_edge(t2, v, **{weight: missing_weight_2})
     P1.add_edges_from(P2.edges(data=True))
     return P1
 
 
-_EndpointsToPaths = Dict[FrozenSet[int], Dict[int, List[Path[int]]]]
+_EndpointsToPaths = Dict[FrozenSet[T], Dict[int, List[Path[T]]]]
 
 
 def extend_metric(
@@ -604,7 +607,7 @@ def extend_metric(
     O((n * log(W) / eps) ^ 2) vertices
     """
     # eps = eps / (4 * q)
-    endpoints_to_paths: _EndpointsToPaths = defaultdict(lambda: defaultdict(list))
+    endpoints_to_paths: _EndpointsToPaths[int] = defaultdict(lambda: defaultdict(list))
     for P in isolated_paths:
         uv = frozenset({P[0], P[-1]})
         w = __path_weight(G, P, weight)
@@ -614,14 +617,55 @@ def extend_metric(
     vertex_gen = count(max(G.nodes) + 1, step=1)
     G1 = G1.copy()  # type: ignore
     
+    generated_nodes_to_scale_endpoints = dict()
     for uv, scale_to_paths in endpoints_to_paths.items():
-        u, v = tuple(uv)
+        if len(uv) == 1:
+            u, = tuple(uv)
+            v = u
+        else:
+            u, v = tuple(uv)
         for scale in scale_to_paths:
             w = (1 + eps) ** scale
             P = generate_path(u, v, w, vertex_gen, eps, weight)
+            for n in P.nodes:
+                if n in {u, v}:
+                    continue
+                generated_nodes_to_scale_endpoints[n] = (u, v, scale)
             G1.add_edges_from(P.edges(data=True))
     
-    return G1
+    return G1, generated_nodes_to_scale_endpoints
+
+
+def deg_2_embedding_extension(
+    G1: nx.Graph,
+    f: GraphFrechetEmbedding[T],
+    Ps: List[Path[T]],
+    endpoints_to_paths: _EndpointsToPaths[T],
+    eps: float, weight: str
+    # node_to_ep_scale: Dict[int, Tuple[T, T, int]],
+):
+    """
+    Takes a frechet embedding of the graph with virtual nodes
+    and returns the embedding of the isolated paths vertices
+    with respect to the sets sampled in the frechet embedding
+    """
+    # paths_dists = dict()
+    # for P in Ps:
+    #     total = 0
+    #     for i in range(1, len(P) - 1):
+    #         total += G1[P[i - 1]][P[i]][weight]
+    #         paths_dists[P[i]] = total
+    
+    # f_dict = f.as_dict_embedding()
+    # for P in Ps:
+    #     u, v = P[0], P[-1]
+    #     scale = int(np.log(w) / np.log(1 + eps))
+    #     for n in P[1:-1]:
+            
+    #     for A in f.As:
+            
+    #         for n in P[1:-1]:
+    return f.as_dict_embedding()
 
 
 def l_infinity_sparse_graph_embedding(G: nx.Graph, weight: str, q: int, eps=0.5):
@@ -644,13 +688,12 @@ def l_infinity_sparse_graph_embedding(G: nx.Graph, weight: str, q: int, eps=0.5)
     dG = GraphMetricSpace(G, weight=weight)
     G1, F, isolated_paths = _1_2_elimination(G, weight)
     G1 = multigraph_to_graph(G1, weight)
-    for u, v in G1.edges:
-        G1[u][v][weight] *= 0.2
-    G1_ext = extend_metric(G, G1, weight, isolated_paths, q, eps)
+    G1_ext, gen_to_ep_scale = extend_metric(G, G1, weight, isolated_paths, q, eps)
     dG1_ext = GraphMetricSpace(G1_ext, weight=weight)
     f = l_infinity_embedding(dG1_ext, q)
     f = GraphFrechetEmbedding(dG1_ext, f.As, lazy=False)
-    return _degree_one_embedding_extension(dG, f.as_dict_embedding(), F)
+    g = deg_2_embedding_extension(G1, f, isolated_paths, gen_to_ep_scale, eps, weight)
+    return deg_one_embedding_extension(dG, g, F)
 
 
 # def _degree_two_embedding_extension(

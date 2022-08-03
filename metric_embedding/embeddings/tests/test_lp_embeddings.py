@@ -1,10 +1,12 @@
-from itertools import combinations
+from itertools import combinations, count
 
 import networkx as nx
 import numpy as np
+import pytest
 from metric_embedding.core.embedding_analysis import embedding_distortion
 from metric_embedding.embeddings.lp_embeddings import (
-    _1_2_elimination, l_infinity_tree_embedding, tree_separator)
+    _1_2_elimination, find_isolated_path, generate_path,
+    l_infinity_tree_embedding, tree_separator)
 from metric_embedding.metrics.graph_metric import GraphMetricSpace
 from metric_embedding.metrics.lp_metrics import LpMetric
 
@@ -55,8 +57,7 @@ class TestTreeEmbedding:
         N = 128
         T: nx.Graph = nx.random_tree(N)  # type: ignore
         dT = GraphMetricSpace(T)
-        f = l_infinity_tree_embedding(dT)
-        dim = len(f[next(iter(T.nodes))])
+        f, dim = l_infinity_tree_embedding(dT, return_dim=True)
         assert all(len(f[u]) == dim for u in T.nodes)
         linf = LpMetric(float('inf'))
         assert embedding_distortion(dT, linf.d, lambda x: f[x]) == 1
@@ -69,8 +70,7 @@ class TestTreeEmbedding:
         for i, (u, v) in enumerate(T.edges):
             T[u][v]["weight"] = edge_weights[i]
         dT = GraphMetricSpace(T, weight="weight")
-        f = l_infinity_tree_embedding(dT)
-        dim = len(f[next(iter(T.nodes))])
+        f, dim = l_infinity_tree_embedding(dT, return_dim=True)
         assert all(len(f[u]) == dim for u in T.nodes)
         linf = LpMetric(float('inf'))
         assert embedding_distortion(dT, linf.d, lambda x: f[x]) - 1 < self.epsilon
@@ -78,6 +78,23 @@ class TestTreeEmbedding:
 
 
 class TestSparseGraphEmbedding:
+    def test_find_isolated_path_no_isolated_path(self):
+        G: nx.Graph = nx.complete_graph(4)  # type: ignore
+        assert find_isolated_path(G) is None
+    
+    def test_find_isolated_path_has_deg_1(self):
+        assert find_isolated_path(nx.path_graph(4)) == [0, 1, 2, 3]  # type: ignore
+    
+    def test_find_isolated_path_single_path(self):
+        G: nx.Graph = nx.complete_graph(4)  # type: ignore
+        G.add_edges_from([(0, 4), (4, 5), (5, 6), (6, 1)])
+        assert find_isolated_path(G) == [0, 4, 5, 6, 1]
+    
+    def test_find_isolated_path_cycle(self):
+        G: nx.Graph = nx.cycle_graph(4)  # type: ignore
+        P = find_isolated_path(G)
+        assert P == [0, 1, 2, 3, 0] or P == [0, 3, 2, 1, 0]
+
     def test_1_2_elimination(self):
         G: nx.Graph = nx.complete_graph(4)  # type: ignore
         tree_edges = [(0, 4), (0, 5), (4, 6), (4, 7)]
@@ -89,4 +106,24 @@ class TestSparseGraphEmbedding:
         assert set(G1.edges) == {(u, v, 0) for u, v in combinations(range(4), 2)}.union({(1, 3, 1)})  # type: ignore
         assert {frozenset(e) for e in F.edges} == {frozenset(e) for e in tree_edges}
         assert Ps == [[1, 8, 9, 3]] or Ps == [[3, 8, 9, 1]]
+    
+    def test_1_2_elimination_2(self):
+        G: nx.Graph = nx.complete_graph(4)  # type: ignore
+        G.add_edges_from([(1, 8), (8, 9), (9, 3)]) # an isolated path
+        tree_edges = [(8, 4), (8, 5), (4, 6), (4, 7)]
+        G.add_edges_from(tree_edges) # a tree hanged from an inner isolated path vertex
+        for u, v in G.edges:
+            G[u][v]["weight"] = 1
+        G1, F, Ps = _1_2_elimination(G, "weight")
+        assert set(G1.edges) == {(u, v, 0) for u, v in combinations(range(4), 2)}.union({(1, 3, 1)})  # type: ignore
+        assert {frozenset(e) for e in F.edges} == {frozenset(e) for e in tree_edges}
+        assert Ps == [[1, 8, 9, 3]] or Ps == [[3, 8, 9, 1]]
+    
+    def test_generate_path(self):
+        w = 10
+        P = generate_path(0, 1, w, count(2, 1), 0.5, "weight")
+        assert len(P.edges) == len(P.nodes) - 1
+        assert P.degree(0) == P.degree(1) == 1
+        assert all(P.degree(u) == 2 for u in P.nodes if u not in {0, 1})
+        assert abs(sum(P[u][v]["weight"] for u, v in P.edges) - w) <= 0.01
 

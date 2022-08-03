@@ -32,4 +32,4 @@ class TestSparseGraphGen:
             G = random_connected_expected_sparse_graph(n, chi)
             assert len(G.nodes) == n
             assert nx.is_connected(G)
-            assert n - 1 + chi - 2 * std <= len(G.edges) <= n - 1 + chi + 2 * std
+            assert n - 1 + max(chi - 3 * std, 0) <= len(G.edges) <= n - 1 + chi + 3 * std
