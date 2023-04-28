@@ -55,7 +55,7 @@ def random_connected_expected_sparse_graph(n: int, chi: int):
     -----
     The euler characteristic of a graph G = (V, E) is defined
     as the number of edges G has more then a tree, i.e. 
-    chi(G) = |E| - |V| + 1
+    chi(G) = |E| - (|V| - 1)
     """
     G: nx.Graph = nx.random_tree(n)  # type: ignore
     p = chi / ((n * (n - 1) / 2) - (n - 1))

@@ -1,11 +1,13 @@
 import os
+from collections import defaultdict
 from functools import partial
-from itertools import chain, combinations, product
+from itertools import chain, combinations, count, product
 from multiprocessing import Pool
-from typing import (Callable, Dict, Iterable, Optional, Set, Tuple, TypeVar,
-                    Union)
+from typing import (Callable, Dict, Generator, Iterable, List, Literal,
+                    Optional, Set, Tuple, TypeVar, Union)
 
-from metric_embedding.core.metric_space import FiniteMetricSpace, Metric
+from metric_embedding.core.metric_space import (FiniteMetricSpace, Metric,
+                                                MetricSpace)
 from tqdm import tqdm
 
 T1 = TypeVar("T1")
@@ -311,3 +313,85 @@ def distorted_pairs(
         expanded_pairs(X, d_Y, f, S, T, threshold),
         contracted_pairs(X, d_Y, f, S, T, threshold)
     )
+
+
+TMetricSpace = TypeVar('TMetricSpace', bound=FiniteMetricSpace)
+EmbeddingParam = Union[
+    Literal["distortion"],
+    Literal["contraction"],
+    Literal["expansion"],
+    Callable[[TMetricSpace, Metric, Embedding], float]
+]
+
+def analyze_embedding(
+    metrics_gen: Iterable[Tuple[TMetricSpace, Metric[T2], CallableEmbedding[T1, T2]]],
+    metric_parameter: Callable[[TMetricSpace], float],
+    embedding_parameters: List[EmbeddingParam],
+    progress_bar: bool = False,
+    n_workers: int = 0
+):
+    """
+    Analyze an embedding algorithm by running it on a family of metrics of 
+    increasing complexity (mostly size)
+
+    Parameters
+    ----------
+    metrics_gen: An iterable such that every item is a 3-tuple consisting of
+        a finite metric space X, a target metric dY and an embedding of X
+        to points whose distance can be measured by dY
+    metric_parameter: a callable that receives a metric space and returns
+        a parameter of that metric space (such as size or number of edges if 
+        its a graph)
+    embedding_parameters: a list of embedding parameters to be measured. an
+        embedding parameter can be either on of expansion/contraction/distortion
+        as a string or a custom parameter given as a callable receiving
+        3 parameters, the finite metric space, target metric and embedding as
+        given in the metrics_gen
+    progress_bar: If True, a progress bar will be displayed
+    n_workers: number of working processes, if 0 it will be single threaded
+
+    Returns
+    -------
+    a pair (xs, yss) where xs is the list of the metric_parameter for every metric
+    analyzed and yss is a dictionary mapping from every embedding parameter name
+    to the list of values computed on all metrics
+    """
+    params_names_to_func: Dict[str, Callable]= dict()
+    index_gen = count(0, 1)
+    param_to_func = {
+        "distortion": lambda x, y, z: embedding_distortion(
+            x, y, z, progress_bar=progress_bar, n_workers=n_workers
+        ),
+        "contraction": lambda x, y, z: embedding_contraction(
+            x, y, z, progress_bar=progress_bar, n_workers=n_workers
+        ),
+        "expansion": lambda x, y, z: embedding_expansion(
+            x, y, z, progress_bar=progress_bar, n_workers=n_workers
+        )
+    }
+    for param in embedding_parameters:
+        if isinstance(param, Callable):
+            params_names_to_func[f"custom_param_{next(index_gen)}"] = param
+        else:
+            assert param in {"distortion", "expansion", "contraction"}
+            params_names_to_func[param] = param_to_func[param]
+        
+    xs: List[float] = []
+    yss: Dict[str, List[float]] = defaultdict(list)
+    for X, dY, f in metrics_gen:
+        x = metric_parameter(X)
+        xs.append(x)
+        for param, param_f in params_names_to_func.items():
+            yss[param].append(param_f(X, dY, f))
+    return xs, yss
+
+
+def plot_results(xs: List[float], yss: Dict[str, List[float]]):
+    import matplotlib.pyplot as plt
+    fig, ax = plt.subplots()
+    for name, ys in yss.items():
+        ax.plot(xs, ys, label=name)
+    ax.set_xlabel('metric param')
+    ax.set_ylabel('embedding params') 
+    ax.legend()
+    plt.show()

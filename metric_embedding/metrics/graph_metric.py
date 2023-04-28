@@ -2,6 +2,7 @@ from collections import OrderedDict
 from typing import Any, Callable, Dict, Iterable, Optional, TypeVar, Union
 
 import networkx as nx
+
 from metric_embedding.core.metric_space import FiniteMetricSpace
 from metric_embedding.utils.rx_utils import (RxGraphWrapper,
                                              dijkstra_shortest_path_lengths)
@@ -55,5 +56,5 @@ class GraphMetricSpace(FiniteMetricSpace[T]):
     
     def induced_subgraph_metric(self, S: Iterable[T]):
         return GraphMetricSpace(
-            nx.induced_subgraph(self.G, S), weight=self.__weight
+            nx.induced_subgraph(self.G, S), weight=self.__weight # type: ignore
         )

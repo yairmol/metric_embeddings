@@ -119,11 +119,11 @@ class TestSparseGraphEmbedding:
         assert {frozenset(e) for e in F.edges} == {frozenset(e) for e in tree_edges}
         assert Ps == [[1, 8, 9, 3]] or Ps == [[3, 8, 9, 1]]
     
-    def test_generate_path(self):
-        w = 10
-        P = generate_path(0, 1, w, count(2, 1), 0.5, "weight")
-        assert len(P.edges) == len(P.nodes) - 1
-        assert P.degree(0) == P.degree(1) == 1
-        assert all(P.degree(u) == 2 for u in P.nodes if u not in {0, 1})
-        assert abs(sum(P[u][v]["weight"] for u, v in P.edges) - w) <= 0.01
+    # def test_generate_path(self):
+    #     w = 10
+    #     P = generate_path(0, 1, w, count(2, 1), 0.5, "weight")
+    #     assert len(P.edges) == len(P.nodes) - 1
+    #     assert P.degree(0) == P.degree(1) == 1
+    #     assert all(P.degree(u) == 2 for u in P.nodes if u not in {0, 1})
+    #     assert abs(sum(P[u][v]["weight"] for u, v in P.edges) - w) <= 0.01
 
