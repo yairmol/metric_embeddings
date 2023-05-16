@@ -3,10 +3,13 @@ from itertools import combinations, count
 import networkx as nx
 import numpy as np
 import pytest
+
 from metric_embedding.core.embedding_analysis import embedding_distortion
-from metric_embedding.embeddings.lp_embeddings import (
-    _1_2_elimination, find_isolated_path, generate_path,
-    l_infinity_tree_embedding, tree_separator)
+from metric_embedding.embeddings.lp_embeddings import _1_2_elimination
+from metric_embedding.embeddings.sparse_graphs import (find_isolated_path,
+                                                       generate_path)
+from metric_embedding.embeddings.trees import (l_infinity_tree_embedding,
+                                               tree_separator)
 from metric_embedding.metrics.graph_metric import GraphMetricSpace
 from metric_embedding.metrics.lp_metrics import LpMetric
 

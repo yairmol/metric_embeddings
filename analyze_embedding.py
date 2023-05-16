@@ -1,11 +1,11 @@
 from typing import Iterable
 
 import networkx as nx
+
 from metric_embedding.core.embedding_analysis import (analyze_embedding,
                                                       plot_results)
-from metric_embedding.embeddings.lp_embeddings import (GraphFrechetEmbedding,
-                                                       l2_embedding,
-                                                       l_infinity_embedding)
+from metric_embedding.embeddings.frechet_embedding import GraphFrechetEmbedding
+from metric_embedding.embeddings.lp_embeddings import l2_embedding
 from metric_embedding.metrics.graph_metric import GraphMetricSpace
 from metric_embedding.metrics.lp_metrics import LpMetric
 

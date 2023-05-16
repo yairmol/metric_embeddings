@@ -2,7 +2,7 @@ from typing import (Any, Callable, Dict, Generic, Iterable, List, Optional,
                     Tuple, TypeVar)
 
 import networkx as nx
-import retworkx as rx
+import rustworkx as rx
 
 T = TypeVar("T")
 
